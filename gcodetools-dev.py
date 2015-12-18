@@ -1639,7 +1639,6 @@ def draw_csp(csp, stroke = "#f00", fill = "none", comment = "", width = 0.354, g
 		attributes['gcodetools'] = gcodetools_tag
 	if group == None :
 		group = options.doc_root
-		
 	return inkex.etree.SubElement( group, inkex.addNS('path','svg'), attributes) 
 	
 def draw_pointer(x1, color = "#f00", figure = "cross", group = None, comment = "", fill="none", width = .1, size = 2., text = None, font_size=None, pointer_type=None, style= None, attrib = None, gcodetools_tag = None, layer=None) :
@@ -1779,7 +1778,10 @@ def print_(*arg):
 		s = str(unicode(s).encode('unicode_escape'))+" "
 		f.write( s )
 	f.write("\n")
+	f.flush()
 	f.close()
+	
+
 
 def warn(*arg) :
 	gcodetools.warning(", ".join([str(s) for s in arg]))
@@ -3876,7 +3878,7 @@ class Gcodetools(inkex.Effect):
 				return csp_subpath_line_to([], [sp2[1],p])
 	
 		if not self.options.in_out_path and not self.options.plasma_prepare_corners and self.options.in_out_path_do_not_add_reference_point: 
-			self.error("Warning! Extenstion is not said to do anything! Enable one of Create in-out paths or Prepare corners checkboxes or disable Do not add in-out referense point!")
+			self.error("Warning! Extenstion is not told to do anything! Enable one of Create in-out paths or Prepare corners checkboxes or disable Do not add in-out referense point!")
 			return
 
 		# Add in-out-reference point if there is no one yet.		
@@ -3898,9 +3900,11 @@ class Gcodetools(inkex.Effect):
 
 			if self.selected_paths == {}:
 				self.error(_("Nothing is selected. Please select something."),"warning")
+				
 			corner_tolerance = cos((180-self.options.plasma_prepare_corners_tolerance)*pi/180)
 
 			for layer in self.layers :
+				
 				if layer in self.selected_paths :
 					max_dist =	self.transform_scalar(self.options.in_out_path_point_max_dist, layer, reverse=True)
 					l = 		self.transform_scalar(self.options.in_out_path_len, layer, reverse=True)
@@ -3984,10 +3988,9 @@ class Gcodetools(inkex.Effect):
 													subpath,
 													add_func(subpath[-2],subpath[-1],True,l,r)
 													)
+							
 
-							
-							res += [ subpath ] 
-							
+							res += [ subpath ]
 							
 						if self.options.in_out_path_replace_original_path :
 							path.set("d", cubicsuperpath.formatPath( self.apply_transforms(path,res,True) ))
@@ -4297,7 +4300,9 @@ class Gcodetools(inkex.Effect):
 					"4th axis offset": 0.,
 					"lift knife at corner": 0.,
 					"passing feed":"800",					
-					"fine feed":"800",					
+					"fine feed":"800",
+					"spindle move": "",
+					"spindle line arc": "",
 				}			
 		self.tools_field_order = [
 					'name',
@@ -4568,6 +4573,18 @@ class Gcodetools(inkex.Effect):
 		return True
 			
 
+################################################################################
+###
+###		Safe getting of tool parameters
+###		If parameter not set, return empty string
+###		This way, different tools don't need a common subset of attributes
+###
+################################################################################
+	def get_tool_parameter(self, tool, key):
+		if key in tool:
+			return tool[key]
+		else:
+			return ""
 
 ################################################################################
 ###
@@ -4588,6 +4605,10 @@ class Gcodetools(inkex.Effect):
 			m,a = [1,1,self.options.Zscale*Zauto_scale,1,1,self.options.Zscale*Zauto_scale], [0,0,self.options.Zoffset,0,0,0]
 			r = ''	
 			for i in range(6):
+				if tool['name'] == "Laser" and i == 2:
+					# Do not output any Z values for Laser, it must stay focussed
+					# laser intensity is controlled via the S word
+					c[i] = None
 				if c[i]!=None:
 					r += s[i] + ("%f" % (c[i]*m[i]+a[i])) + s1[i]
 			return r
@@ -4643,7 +4664,9 @@ class Gcodetools(inkex.Effect):
 				g += "S%s\n" % (tool["spindle rpm"])
 		lg, zs, f =  'G00', self.options.Zsafe, " F%f"%tool['feed'] 
 		current_a = None
-		go_to_safe_distance = "G00" + c([None,None,zs]) + "\n" 
+		go_to_safe_distance = "G00" + c([None,None,zs]) + " (Go to safe distance)\n" 
+		if tool['name'] == "Laser":
+			go_to_safe_distance = "" # laser must stay focussed, no need to go in any Z direction
 		penetration_feed = " F%s"%tool['penetration feed'] 
 		for i in range(1,len(curve)):
 		#	Creating Gcode for curve between s=curve[i-1] and si=curve[i] start at s[0] end at s[4]=si[0]
@@ -4651,7 +4674,11 @@ class Gcodetools(inkex.Effect):
 			if s[1] in ["line","arc"] and point_to_point_d2(s[0],si[0]) < 1e-7 : continue
 			feed = f if lg not in ['G01','G02','G03'] else ''
 			if s[1]	== 'move':
-				g += go_to_safe_distance + "G00" + c(si[0]) + "\n" + tool['gcode before path']
+				g += go_to_safe_distance
+				g += "G00" + c(si[0])
+				g += self.get_tool_parameter(tool, "spindle move")
+				g += "\n"
+				g += tool['gcode before path']
 				g += "(Subpath start)\n"
 				lg = 'G00'
 			elif s[1] == 'end':
@@ -4662,8 +4689,13 @@ class Gcodetools(inkex.Effect):
 				if tool['4th axis meaning'] == "tangent knife" : 
 					current_a, axis4, g_ =  get_tangent_knife_turn_gcode(s,si,tool,current_a, depth, penetration_feed)
 					g+=g_
-				if lg=="G00": g += "G01" + c([None,None,s[5][0]+depth]) + penetration_feed +"(Penetrate)\n"	
-				g += "G01" +c(si[0]+[s[5][1]+depth]) + feed + "\n"
+				if lg=="G00" and tool['name'] != "Laser":
+					# Laser doen't need to penetrate
+					g += "G01" + c([None,None,s[5][0]+depth]) + penetration_feed +"(Penetrate)\n"
+				g += "G01" +c(si[0]+[s[5][1]+depth])
+				g += feed
+				g += self.get_tool_parameter(tool, "spindle line arc")
+				g += "\n"
 				lg = 'G01'
 			elif s[1] == 'arc':
 				r = [(s[2][0]-s[0][0]), (s[2][1]-s[0][1])]
@@ -4672,14 +4704,24 @@ class Gcodetools(inkex.Effect):
 					g+=g_
 					current_a = current_a+s[3]
 				else : axis4 = ""
-				if lg=="G00": g += "G01" + c([None,None,s[5][0]+depth]) + penetration_feed + "(Penetrate)\n"				
+				if lg=="G00"  and tool['name'] != "Laser":
+					# Laser doen't need to penetrate
+					g += "G01" + c([None,None,s[5][0]+depth]) + penetration_feed + "(Penetrate)\n"
 				if (r[0]**2 + r[1]**2)>self.options.min_arc_radius**2:
 					r1, r2 = (P(s[0])-P(s[2])), (P(si[0])-P(s[2]))
 					if abs(r1.mag()-r2.mag()) < 0.001 :
-						g += ("G02" if s[3]<0 else "G03") + c(si[0]+[ s[5][1]+depth, (s[2][0]-s[0][0]),(s[2][1]-s[0][1])  ]) + feed + axis4 + "\n"
+						g += ("G02" if s[3]<0 else "G03") + c(si[0]+[ s[5][1]+depth, (s[2][0]-s[0][0]),(s[2][1]-s[0][1])  ])
+						g += feed
+						g += axis4
+						g += self.get_tool_parameter(tool, "spindle line arc")
+						g += "\n"
 					else:
 						r = (r1.mag()+r2.mag())/2
-						g += ("G02" if s[3]<0 else "G03") + c(si[0]+[s[5][1]+depth]) + " R%f" % (r) + feed  + axis4 + "\n"
+						g += ("G02" if s[3]<0 else "G03") + c(si[0]+[s[5][1]+depth]) + " R%f" % (r)
+						g += feed
+						g += axis4
+						g += self.get_tool_parameter(tool, "spindle line arc")
+						g += "\n"
 					lg = 'G02'
 				else:
 					if tool['4th axis meaning'] == "tangent knife" : 
@@ -6996,6 +7038,18 @@ G01 Z1 (going to cutting z)\n""",
 				"gcode before path":"""M03 S1(Turn spray on)\n """,
 				"gcode after path":"M05 (Turn spray off)\n ",
 				"tool change gcode":"(Add G00 here to change sprayer if needed)\n",
+				
+			}
+		elif self.options.tools_library_type == "laser":
+			tool = {
+				"name": "Laser",
+				"id": "Laser 0001",
+				"diameter":0.1,
+				"feed":1000,
+				"gcode before path":"(Laser before path)",
+				"gcode after path":"(Laser after path)",
+				"spindle move": " S0",
+				"spindle line arc": " S255",
 				
 			}
 
