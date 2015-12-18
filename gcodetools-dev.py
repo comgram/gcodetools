@@ -1601,12 +1601,12 @@ def get_text(node) :
 
 
 
-def draw_text(self, text,x,y, group = None, style = None, font_size = 10, gcodetools_tag = None, layer = None):
+def draw_text(text,x,y, group = None, style = None, font_size = 10, gcodetools_tag = None, layer = None):
 	if layer != None :
 		x,y = gcodetools.transform([x,y], layer, True)
 	if style == None : 
 		style = "font-family:DejaVu Sans;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:DejaVu Sans;fill:#000000;fill-opacity:1;stroke:none;"
-	style += "font-size:%f;"%(self.utouu(str(font_size)+"px"))
+	style += "font-size:%s;"%(str(font_size)+"px")
 	attributes = {			'x':	str(x),
 							inkex.addNS("space","xml"):"preserve",
 							'y':	str(y),
@@ -1678,7 +1678,7 @@ def draw_pointer(x1, color = "#f00", figure = "cross", group = None, comment = "
 	if text != None	:
 		if font_size == None : font_size = 7
 		group = inkex.etree.SubElement( group, inkex.addNS('g','svg'), {"gcodetools": pointer_type+" group"} )		
-		self.draw_text(text,x[0]+size*2.2,x[1]-size, group = group, font_size = font_size) 
+		draw_text(text,x[0]+size*2.2,x[1]-size, group = group, font_size = font_size) 
 	if figure  == "line" :
 		s = ""
 		for i in range(1,len(x)/2) :
